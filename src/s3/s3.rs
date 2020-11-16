@@ -2,14 +2,18 @@ use tokio::runtime::Runtime;
 use rusoto_s3::{ListObjectsV2Request, S3, S3Client};
 use crate::s3::models::s3_list_object::S3ListObject;
 use crate::errors::models::error_response::ErrorResponse;
+use crate::s3::models::s3_location::S3Location;
 
 
-pub fn ls(client: &S3Client, bucket: &str, prefix: &str) -> Result<Vec<S3ListObject>, String> {
+pub fn ls(client: &S3Client, path: &str) -> Result<Vec<S3ListObject>, String> {
     let mut rt  = Runtime::new().unwrap();
 
-    rt.block_on(async {
-        s3_list(&client, bucket, prefix).await
-    })
+    match S3Location::from(path) {
+        Ok(location) => rt.block_on(async {
+            s3_list(&client, location.bucket.as_str(), location.key.as_str()).await
+        }),
+        Err(_e) => ErrorResponse::json(_e.as_str()),
+    }
 }
 
 async fn s3_list(client: &S3Client, bucket: &str, prefix: &str) -> Result<Vec<S3ListObject>, String> {
