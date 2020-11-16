@@ -12,7 +12,7 @@ pub fn ls(client: &S3Client, path: &str) -> Result<Vec<S3ListObject>, String> {
         Ok(location) => rt.block_on(async {
             s3_list(&client, location.bucket.as_str(), location.key.as_str()).await
         }),
-        Err(_e) => ErrorResponse::json(_e.as_str()),
+        Err(_e) => Err(ErrorResponse::json(_e.as_str())),
     }
 }
 
