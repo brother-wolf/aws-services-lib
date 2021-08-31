@@ -9,7 +9,7 @@ use crate::datapipelines::models::pipeline_task_status::{PipelineTaskStatus, Pip
 use crate::utilities::get_or_blank;
 use tokio::runtime::Runtime;
 
-async fn get_pipeline_id_names(data_pipeline_client: &DataPipelineClient) -> Vec<PipelineIdName> {
+async fn get_pipeline_id_names(data_pipeline_client: &DataPipelineClient) -> Result<Vec<PipelineIdName>, String> {
     let mut all_pipelines: Vec<PipelineIdName> = vec![];
     let mut _marker = Some("".to_string());
     while _marker.is_some() {
@@ -20,13 +20,13 @@ async fn get_pipeline_id_names(data_pipeline_client: &DataPipelineClient) -> Vec
                 _marker = pipelines.marker.clone();
             }
             Err(e) => {
-                println!("Error listing pipelines {}", e);
                 all_pipelines = vec![];
-                _marker = None
+                _marker = None;
+                return Err(format!("Error listing pipelines {}", e))
             }
         }
     }
-    all_pipelines
+    Ok(all_pipelines)
 }
 
 async fn get_pipeline_tasks(pipeline_id: String, client: &DataPipelineClient, allowed_statuses: &Vec<PipelineTaskStatus>) -> Vec<PipelineTasks> {
@@ -119,25 +119,31 @@ fn convert(fields: &Vec<Field>) -> HashMap<String, String> {
     hashm
 }
 
-pub fn status(client: &DataPipelineClient, pipeline_name_filters: &Vec<String>, filter_operation: &str) -> Vec<Pipeline> {
+pub fn status(client: &DataPipelineClient, pipeline_name_filters: &Vec<String>, filter_operation: &str) -> Result<Vec<Pipeline>, String> {
     let mut rt = Runtime::new().unwrap();
     let allowed_status_query = vec![Running, WaitingOnDependencies, Creating, WaitingForRunner];
     let now = Utc::now();
-    let pipeline_ids = rt.block_on(async {get_pipeline_id_names(&client).await}).iter().flat_map(|pin| &pin.id).map(|c| c.clone()).collect();
-    let pipelines_status = rt.block_on(async {get_pipelines_descriptions(pipeline_ids, &client).await}).iter()
-        .filter(|pipe_desc| if filter_operation == "include" {
-            pipeline_name_filters.contains(&pipe_desc.name)
-        } else {
-            !pipeline_name_filters.contains(&pipe_desc.name) })
-        .flat_map( |pipeline_desc| {
-            let fields = convert(&pipeline_desc.fields);
-            let tasks = rt.block_on(async {get_pipeline_tasks(
-                pipeline_desc.pipeline_id.clone(),
-                client,
-                &allowed_status_query).await});
-            Pipeline::create(tasks, fields, now)
-        })
-        .collect();
 
-    pipelines_status
+    match rt.block_on(async { get_pipeline_id_names(&client).await }){
+        Ok(pipeline_id_name_result) => {
+            let pipeline_ids = pipeline_id_name_result.iter().flat_map(|pin| &pin.id).map(|c| c.clone()).collect();
+            let pipelines_status = rt.block_on(async {get_pipelines_descriptions(pipeline_ids, &client).await}).iter()
+                .filter(|pipe_desc| if filter_operation == "include" {
+                    pipeline_name_filters.contains(&pipe_desc.name)
+                } else {
+                    !pipeline_name_filters.contains(&pipe_desc.name) })
+                .flat_map( |pipeline_desc| {
+                    let fields = convert(&pipeline_desc.fields);
+                    let tasks = rt.block_on(async {get_pipeline_tasks(
+                        pipeline_desc.pipeline_id.clone(),
+                        client,
+                        &allowed_status_query).await});
+                    Pipeline::create(tasks, fields, now)
+                })
+                .collect();
+
+            Ok(pipelines_status)
+        },
+        Err(e) => Err(e),
+    }
 }
